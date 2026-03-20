@@ -1,0 +1,5 @@
+netpulse-env/
+logs/
+__pycache__/
+*.pyc
+.env
