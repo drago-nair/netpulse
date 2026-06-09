@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NetPulse — Network Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg: #050a0e;
+      --panel: #0b1318;
+      --border: #0f2a35;
+      --accent: #00e5ff;
+      --accent2: #00ff9d;
+      --text: #c8d8e0;
+      --dim: #4a6070;
+      --critical: #ff3b5c;
+      --high: #ff8c00;
+      --low: #ffd600;
+      --info: #00b4d8;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(0,229,255,0.015) 2px, rgba(0,229,255,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(11,19,24,0.95);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+
+    .logo { display: flex; align-items: center; gap: 12px; }
+
+    .logo-icon {
+      width: 36px; height: 36px;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .logo-icon::before {
+      content: '';
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,229,255,0.5); }
+      50% { box-shadow: 0 0 0 8px rgba(0,229,255,0); }
+    }
+
+    .logo h1 {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: 1.4rem;
+      letter-spacing: 0.15em;
+      color: var(--accent);
+      text-shadow: 0 0 20px rgba(0,229,255,0.4);
+    }
+
+    .logo span { font-size: 0.7rem; color: var(--dim); letter-spacing: 0.1em; }
+
+    .status-bar { display: flex; gap: 24px; align-items: center; }
+
+    .status-item { display: flex; flex-direction: column; align-items: flex-end; }
+    .status-item .label { font-size: 0.6rem; color: var(--dim); letter-spacing: 0.1em; }
+    .status-item .value { font-size: 0.85rem; color: var(--accent2); }
+
+    #live-dot {
+      width: 8px; height: 8px;
+      background: var(--accent2);
+      border-radius: 50%;
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 1px;
+      background: var(--border);
+      height: calc(100vh - 73px);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      background: var(--border);
+    }
+
+    .stat-block {
+      background: var(--panel);
+      padding: 20px;
+      flex: 1;
+    }
+
+    .stat-block h3 {
+      font-family: 'Syne', sans-serif;
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--dim);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    .severity-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sev-item .num {
+      font-size: 2.4rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .sev-item .lbl { font-size: 0.65rem; color: var(--dim); }
+    .sev-item.critical .num { color: var(--critical); text-shadow: 0 0 20px rgba(255,59,92,0.4); }
+    .sev-item.high .num { color: var(--high); text-shadow: 0 0 20px rgba(255,140,0,0.4); }
+    .sev-item.low .num { color: var(--low); }
+
+    .detector-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .det-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: rgba(0,229,255,0.03);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--accent);
+      font-size: 0.75rem;
+    }
+
+    .det-item .cnt { color: var(--accent); font-size: 0.9rem; }
+
+    .feed-panel {
+      background: var(--panel);
+      padding: 20px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .feed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .feed-header h2 {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
+
+    #alert-badge {
+      background: var(--accent);
+      color: var(--bg);
+      font-size: 0.65rem;
+      padding: 2px 8px;
+      border-radius: 2px;
+      font-weight: bold;
+    }
+
+    #alert-feed {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #alert-feed::-webkit-scrollbar { width: 4px; }
+    #alert-feed::-webkit-scrollbar-track { background: transparent; }
+    #alert-feed::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .alert-card {
+      padding: 12px 14px;
+      border-left: 3px solid;
+      background: rgba(255,255,255,0.02);
+      animation: slideIn 0.25s ease;
+      transition: background 0.15s;
+    }
+
+    .alert-card:hover { background: rgba(255,255,255,0.05); }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-10px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .alert-card.CRITICAL { border-color: var(--critical); }
+    .alert-card.HIGH     { border-color: var(--high); }
+    .alert-card.LOW      { border-color: var(--low); }
+    .alert-card.INFO     { border-color: var(--info); }
+
+    .card-meta { display: flex; justify-content: space-between; margin-bottom: 4px; }
+
+    .card-sev { font-size: 0.65rem; letter-spacing: 0.1em; padding: 1px 6px; }
+    .card-sev.CRITICAL { color: var(--critical); }
+    .card-sev.HIGH     { color: var(--high); }
+    .card-sev.LOW      { color: var(--low); }
+    .card-sev.INFO     { color: var(--info); }
+
+    .card-time     { font-size: 0.65rem; color: var(--dim); }
+    .card-detector { font-size: 0.7rem; color: var(--accent2); margin-bottom: 2px; }
+    .card-msg      { font-size: 0.78rem; color: var(--text); line-height: 1.4; }
+    .card-src      { font-size: 0.65rem; color: var(--dim); margin-top: 4px; }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--dim);
+      gap: 8px;
+    }
+
+    .empty-state .icon { font-size: 2rem; }
+    .empty-state p { font-size: 0.75rem; letter-spacing: 0.1em; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon"></div>
+    <div>
+      <h1>NETPULSE</h1>
+      <span>NETWORK INTRUSION MONITOR</span>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-item">
+      <span class="label">INTERFACE</span>
+      <span class="value" id="iface">LIVE</span>
+    </div>
+    <div class="status-item">
+      <span class="label">UPTIME</span>
+      <span class="value" id="uptime">00:00:00</span>
+    </div>
+    <div class="status-item">
+      <span class="label">ALERTS</span>
+      <span class="value" id="total-count">0</span>
+    </div>
+    <div id="live-dot" title="Connected"></div>
+  </div>
+</header>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="stat-block">
+      <h3>Severity Breakdown</h3>
+      <div class="severity-grid">
+        <div class="sev-item critical">
+          <div class="num" id="cnt-critical">0</div>
+          <div class="lbl">CRITICAL</div>
+        </div>
+        <div class="sev-item high">
+          <div class="num" id="cnt-high">0</div>
+          <div class="lbl">HIGH</div>
+        </div>
+        <div class="sev-item low">
+          <div class="num" id="cnt-low">0</div>
+          <div class="lbl">LOW</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stat-block">
+      <h3>Detectors</h3>
+      <div class="detector-list">
+        <div class="det-item"><span>PortScan</span><span class="cnt" id="d-portscan">0</span></div>
+        <div class="det-item"><span>ARPSpoof</span><span class="cnt" id="d-arpspoof">0</span></div>
+        <div class="det-item"><span>DNSAnomaly</span><span class="cnt" id="d-dnsanomaly">0</span></div>
+        <div class="det-item"><span>SSHBruteForce</span><span class="cnt" id="d-sshbruteforce">0</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="feed-panel">
+    <div class="feed-header">
+      <h2>Live Alert Feed</h2>
+      <span id="alert-badge">0 alerts</span>
+    </div>
+    <div id="alert-feed">
+      <div class="empty-state">
+        <div class="icon">◈</div>
+        <p>MONITORING — NO ALERTS YET</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const socket = io();
+  let totalAlerts = 0;
+  const counts = { CRITICAL: 0, HIGH: 0, LOW: 0, INFO: 0 };
+  const detCounts = {};
+  const startTime = Date.now();
+
+  setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const h = String(Math.floor(s / 3600)).padStart(2, '0');
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    document.getElementById('uptime').textContent = `${h}:${m}:${sec}`;
+  }, 1000);
+
+  socket.on('alert', (alert) => {
+    totalAlerts++;
+    document.getElementById('total-count').textContent = totalAlerts;
+    document.getElementById('alert-badge').textContent = `${totalAlerts} alert${totalAlerts !== 1 ? 's' : ''}`;
+
+    counts[alert.severity] = (counts[alert.severity] || 0) + 1;
+    document.getElementById('cnt-critical').textContent = counts.CRITICAL || 0;
+    document.getElementById('cnt-high').textContent = counts.HIGH || 0;
+    document.getElementById('cnt-low').textContent = counts.LOW || 0;
+
+    const dk = alert.detector.toLowerCase().replace(/\s/g, '');
+    detCounts[dk] = (detCounts[dk] || 0) + 1;
+    const el = document.getElementById(`d-${dk}`);
+    if (el) el.textContent = detCounts[dk];
+
+    const feed = document.getElementById('alert-feed');
+    const empty = feed.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const ts = new Date(alert.timestamp).toLocaleTimeString();
+    const card = document.createElement('div');
+    card.className = `alert-card ${alert.severity}`;
+    card.innerHTML = `
+      <div class="card-meta">
+        <span class="card-sev ${alert.severity}">${alert.severity}</span>
+        <span class="card-time">${ts}</span>
+      </div>
+      <div class="card-detector">${alert.detector}</div>
+      <div class="card-msg">${alert.message}</div>
+      ${alert.src_ip ? `<div class="card-src">SRC: ${alert.src_ip}${alert.dst_ip ? ' → ' + alert.dst_ip : ''}</div>` : ''}
+    `;
+
+    feed.insertBefore(card, feed.firstChild);
+    while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+  });
+</script>
+</body>
+</html>
